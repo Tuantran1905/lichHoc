@@ -44,8 +44,8 @@ public class Repo {
             try {
                 File f = new File(ctx.getCacheDir(), "tkb.xlsx");
                 download(f);
-                List<Week> weeks = TkbParser.parse(f, CLASS_NAME);
                 LocalDate thisMon = LocalDate.now().with(DayOfWeek.MONDAY);
+                List<Week> weeks = TkbParser.parse(f, CLASS_NAME, java.util.Arrays.asList(thisMon, thisMon.plusDays(7)));
                 Week cur = pick(weeks, thisMon), nxt = pick(weeks, thisMon.plusDays(7));
 
                 Week oldCur = current(ctx), oldNext = next(ctx);

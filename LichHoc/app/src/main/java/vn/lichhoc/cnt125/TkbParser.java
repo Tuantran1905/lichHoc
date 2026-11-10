@@ -44,6 +44,14 @@ public class TkbParser {
 
     /** Trả về mọi tuần tìm thấy của lớp (mỗi sheet một tuần). */
     public static List<Week> parse(File xlsx, String className) throws IOException {
+        return parse(xlsx, className, null);
+    }
+
+    /**
+     * Như trên, nhưng chỉ đọc kỹ các sheet có chứa ngày của các tuần bắt đầu bằng {@code mondays}
+     * (dò nhanh trước, bỏ qua các tuần cũ) để tải nhanh hơn. {@code mondays} null = đọc hết.
+     */
+    public static List<Week> parse(File xlsx, String className, java.util.Collection<LocalDate> mondays) throws IOException {
         String key = norm(className);
         List<Week> out = new ArrayList<>();
         try (ZipFile z = new ZipFile(xlsx)) {
@@ -60,14 +68,43 @@ public class TkbParser {
                     shared.add(unescape(b.toString()));
                 }
             }
+            List<String> markers = mondays == null ? null : markers(shared, mondays);
             Enumeration<? extends ZipEntry> en = z.entries();
             while (en.hasMoreElements()) {
                 ZipEntry e = en.nextElement();
                 if (!e.getName().matches("xl/worksheets/sheet\\d+\\.xml")) continue;
-                TreeMap<Integer, String[]> rows = readSheet(read(z, e), shared);
+                String xml = read(z, e);
+                if (markers != null) {
+                    boolean hit = false;
+                    for (String mk : markers) if (xml.contains(mk)) { hit = true; break; }
+                    if (!hit) continue;
+                }
+                TreeMap<Integer, String[]> rows = readSheet(xml, shared);
                 Week w = findClass(rows, key);
                 if (w != null) out.add(w);
             }
+        }
+        return out;
+    }
+
+    /** Các đoạn XML ("<v>chỉ số</v>") cho thấy sheet có chứa một ngày của các tuần cần tìm. */
+    static List<String> markers(List<String> shared, java.util.Collection<LocalDate> mondays) {
+        java.util.Set<String> dates = new java.util.HashSet<>();
+        List<String> out = new ArrayList<>();
+        for (LocalDate mon : mondays)
+            for (int i = 0; i < 7; i++) {
+                LocalDate d = mon.plusDays(i);
+                dates.add(String.format("%02d/%02d/%d", d.getDayOfMonth(), d.getMonthValue(), d.getYear()));
+                dates.add(d.getDayOfMonth() + "/" + d.getMonthValue() + "/" + d.getYear());
+                dates.add(String.format("%02d/%d/%d", d.getDayOfMonth(), d.getMonthValue(), d.getYear()));
+                dates.add(String.format("%d/%02d/%d", d.getDayOfMonth(), d.getMonthValue(), d.getYear()));
+                long serial = d.toEpochDay() - LocalDate.of(1899, 12, 30).toEpochDay();
+                out.add("<v>" + serial + "</v>");
+            }
+        out.addAll(dates); // ngày ghi thẳng trong sheet (inline string)
+        for (int i = 0; i < shared.size(); i++) {
+            Matcher m = DATE.matcher(shared.get(i));
+            while (m.find()) if (dates.contains(m.group())) { out.add("<v>" + i + "</v>"); break; }
         }
         return out;
     }
