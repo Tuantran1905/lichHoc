@@ -23,8 +23,6 @@ import java.util.zip.ZipFile;
  */
 public class TkbParser {
     private static final int COLS = 12;
-    private static final Pattern SI = Pattern.compile("<si>(.*?)</si>|<si/>", Pattern.DOTALL);
-    private static final Pattern RPH = Pattern.compile("<rPh\\b.*?</rPh>", Pattern.DOTALL);
     private static final Pattern T = Pattern.compile("<t(?:\\s[^>]*)?>(.*?)</t>", Pattern.DOTALL);
     private static final Pattern ROW = Pattern.compile("<row\\b([^>]*?)(?:/>|>(.*?)</row>)", Pattern.DOTALL);
     private static final Pattern ROW_R = Pattern.compile("\\br=\"(\\d+)\"");
@@ -48,65 +46,139 @@ public class TkbParser {
     }
 
     /**
-     * Như trên, nhưng chỉ đọc kỹ các sheet có chứa ngày của các tuần bắt đầu bằng {@code mondays}
-     * (dò nhanh trước, bỏ qua các tuần cũ) để tải nhanh hơn. {@code mondays} null = đọc hết.
+     * Đọc lịch của lớp. Cách nhanh: tìm ô chứa tên lớp trong mỗi sheet, chỉ cắt khoảng 22 dòng
+     * của lớp đó để đọc, và dừng khi đã có đủ các tuần bắt đầu bằng {@code mondays}.
+     * {@code mondays} null = lấy mọi tuần.
      */
     public static List<Week> parse(File xlsx, String className, java.util.Collection<LocalDate> mondays) throws IOException {
         String key = norm(className);
         List<Week> out = new ArrayList<>();
+        java.util.Set<LocalDate> need = mondays == null ? null : new java.util.HashSet<>(mondays);
         try (ZipFile z = new ZipFile(xlsx)) {
             List<String> shared = new ArrayList<>();
             ZipEntry se = z.getEntry("xl/sharedStrings.xml");
-            if (se != null) {
-                String xml = read(z, se);
-                Matcher m = SI.matcher(xml);
-                while (m.find()) {
-                    String inner = m.group(1) == null ? "" : RPH.matcher(m.group(1)).replaceAll("");
-                    StringBuilder b = new StringBuilder();
-                    Matcher t = T.matcher(inner);
-                    while (t.find()) b.append(t.group(1));
-                    shared.add(unescape(b.toString()));
-                }
-            }
-            List<String> markers = mondays == null ? null : markers(shared, mondays);
+            if (se != null) shared = readShared(read(z, se));
+
+            List<String> marks = new ArrayList<>();
+            for (int i = 0; i < shared.size(); i++)
+                if (norm(shared.get(i)).equals(key)) marks.add("<v>" + i + "</v>");
+
+            List<ZipEntry> sheets = new ArrayList<>();
             Enumeration<? extends ZipEntry> en = z.entries();
             while (en.hasMoreElements()) {
                 ZipEntry e = en.nextElement();
-                if (!e.getName().matches("xl/worksheets/sheet\\d+\\.xml")) continue;
+                if (e.getName().matches("xl/worksheets/sheet\\d+\\.xml")) sheets.add(e);
+            }
+            // Sheet mới thường được thêm sau cùng: đọc từ cuối lên để sớm gặp tuần hiện tại
+            sheets.sort((a, b) -> Integer.compare(sheetNo(b.getName()), sheetNo(a.getName())));
+
+            for (ZipEntry e : sheets) {
                 String xml = read(z, e);
-                if (markers != null) {
-                    boolean hit = false;
-                    for (String mk : markers) if (xml.contains(mk)) { hit = true; break; }
-                    if (!hit) continue;
+                List<Week> found = new ArrayList<>();
+                List<Integer> rowsAt = marks.isEmpty() ? null : classRows(xml, marks);
+                if (rowsAt == null) {
+                    Week w = findClass(readSheet(xml, shared), key);
+                    if (w != null) found.add(w);
+                } else {
+                    for (int r : rowsAt) {
+                        Week w = findClass(readSheet(rowSlice(xml, r, 24), shared), key);
+                        if (w != null) found.add(w);
+                    }
+                    // Có tên lớp nhưng cắt dòng không đọc được: đọc cả sheet cho chắc
+                    if (found.isEmpty() && containsAny(xml, marks)) {
+                        Week w = findClass(readSheet(xml, shared), key);
+                        if (w != null) found.add(w);
+                    }
                 }
-                TreeMap<Integer, String[]> rows = readSheet(xml, shared);
-                Week w = findClass(rows, key);
-                if (w != null) out.add(w);
+                for (Week w : found) {
+                    out.add(w);
+                    if (need != null) need.remove(w.monday);
+                }
+                if (need != null && need.isEmpty()) break;
             }
         }
         return out;
     }
 
-    /** Các đoạn XML ("<v>chỉ số</v>") cho thấy sheet có chứa một ngày của các tuần cần tìm. */
-    static List<String> markers(List<String> shared, java.util.Collection<LocalDate> mondays) {
-        java.util.Set<String> dates = new java.util.HashSet<>();
+    private static boolean containsAny(String xml, List<String> marks) {
+        for (String m : marks) if (xml.contains(m)) return true;
+        return false;
+    }
+
+    private static int sheetNo(String name) {
+        String d = name.replaceAll("\\D", "");
+        try { return Integer.parseInt(d); } catch (Exception ex) { return 0; }
+    }
+
+    /** Đọc bảng chữ dùng chung bằng quét chuỗi (nhanh hơn biểu thức chính quy). */
+    static List<String> readShared(String xml) {
         List<String> out = new ArrayList<>();
-        for (LocalDate mon : mondays)
-            for (int i = 0; i < 7; i++) {
-                LocalDate d = mon.plusDays(i);
-                dates.add(String.format("%02d/%02d/%d", d.getDayOfMonth(), d.getMonthValue(), d.getYear()));
-                dates.add(d.getDayOfMonth() + "/" + d.getMonthValue() + "/" + d.getYear());
-                dates.add(String.format("%02d/%d/%d", d.getDayOfMonth(), d.getMonthValue(), d.getYear()));
-                dates.add(String.format("%d/%02d/%d", d.getDayOfMonth(), d.getMonthValue(), d.getYear()));
-                long serial = d.toEpochDay() - LocalDate.of(1899, 12, 30).toEpochDay();
-                out.add("<v>" + serial + "</v>");
+        int i = 0;
+        StringBuilder b = new StringBuilder();
+        while (true) {
+            int si = xml.indexOf("<si", i);
+            if (si < 0) break;
+            int gt = xml.indexOf('>', si);
+            if (gt < 0) break;
+            if (xml.charAt(gt - 1) == '/') { out.add(""); i = gt + 1; continue; }
+            int end = xml.indexOf("</si>", gt);
+            if (end < 0) break;
+            b.setLength(0);
+            int k = gt + 1;
+            while (k < end) {
+                int t = xml.indexOf("<t", k);
+                if (t < 0 || t >= end) break;
+                int rph = xml.indexOf("<rPh", k);
+                if (rph >= 0 && rph < t) { int re = xml.indexOf("</rPh>", rph); k = re < 0 ? end : re + 6; continue; }
+                char nx = xml.charAt(t + 2);
+                if (nx != '>' && nx != ' ' && nx != '/') { k = t + 2; continue; }
+                int tg = xml.indexOf('>', t);
+                if (xml.charAt(tg - 1) == '/') { k = tg + 1; continue; }
+                int te = xml.indexOf("</t>", tg);
+                if (te < 0 || te > end) break;
+                b.append(xml, tg + 1, te);
+                k = te + 4;
             }
-        out.addAll(dates); // ngày ghi thẳng trong sheet (inline string)
-        for (int i = 0; i < shared.size(); i++) {
-            Matcher m = DATE.matcher(shared.get(i));
-            while (m.find()) if (dates.contains(m.group())) { out.add("<v>" + i + "</v>"); break; }
+            out.add(unescape(b.toString()));
+            i = end + 5;
         }
         return out;
+    }
+
+    /** Các số dòng (cột B, kiểu chữ dùng chung) có tên lớp. */
+    static List<Integer> classRows(String xml, List<String> marks) {
+        List<Integer> rows = new ArrayList<>();
+        for (String mk : marks) {
+            int from = 0;
+            while (true) {
+                int pos = xml.indexOf(mk, from);
+                if (pos < 0) break;
+                from = pos + mk.length();
+                int c = xml.lastIndexOf("<c ", pos);
+                if (c < 0) continue;
+                int gt = xml.indexOf('>', c);
+                String tag = xml.substring(c, Math.max(c, gt));
+                if (!tag.contains("t=\"s\"")) continue;
+                int r = tag.indexOf("r=\"B");
+                if (r < 0) continue;
+                int q = tag.indexOf('"', r + 4);
+                try { rows.add(Integer.parseInt(tag.substring(r + 4, q))); } catch (Exception ignored) { }
+            }
+        }
+        return rows;
+    }
+
+    /** Cắt các dòng từ {@code row} tới {@code row + count} để đọc riêng khối của lớp. */
+    static String rowSlice(String xml, int row, int count) {
+        int s = xml.indexOf("<row r=\"" + row + "\"");
+        if (s < 0) return "";
+        int e = -1;
+        for (int r = row + count; r > row && e < 0; r--) {
+            int p = xml.indexOf("<row r=\"" + r + "\"", s);
+            if (p >= 0) e = xml.indexOf("</row>", p);
+        }
+        if (e < 0) e = xml.indexOf("</row>", s);
+        return e < 0 ? "" : xml.substring(s, e + 6);
     }
 
     static TreeMap<Integer, String[]> readSheet(String xml, List<String> shared) {
