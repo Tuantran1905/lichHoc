@@ -43,9 +43,17 @@ public class Repo {
             SharedPreferences p = prefs(ctx);
             try {
                 File f = new File(ctx.getCacheDir(), "tkb.xlsx");
-                download(f);
+                try { download(f); }
+                catch (Exception ex) { throw new IOException("Tải file: " + ex.getMessage(), ex); }
                 LocalDate thisMon = LocalDate.now().with(DayOfWeek.MONDAY);
-                List<Week> weeks = TkbParser.parse(f, CLASS_NAME, java.util.Arrays.asList(thisMon, thisMon.plusDays(7)));
+                List<Week> weeks;
+                try {
+                    weeks = TkbParser.parse(f, CLASS_NAME, java.util.Arrays.asList(thisMon, thisMon.plusDays(7)));
+                    if (pick(weeks, thisMon) == null && pick(weeks, thisMon.plusDays(7)) == null)
+                        weeks = TkbParser.parse(f, CLASS_NAME); // dò nhanh không thấy thì đọc toàn bộ file
+                } catch (Exception ex) {
+                    throw new IOException("Đọc file: " + ex.getClass().getSimpleName() + " " + ex.getMessage(), ex);
+                }
                 Week cur = pick(weeks, thisMon), nxt = pick(weeks, thisMon.plusDays(7));
 
                 Week oldCur = current(ctx), oldNext = next(ctx);
