@@ -1,0 +1,26 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'vn.lichhoc.cnt125'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'vn.lichhoc.cnt125'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        encoding 'UTF-8'
+    }
+
+    buildTypes {
+        release { minifyEnabled false }
+    }
+}
