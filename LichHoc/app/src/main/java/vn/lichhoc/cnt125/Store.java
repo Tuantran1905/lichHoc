@@ -87,8 +87,44 @@ public class Store {
     }
     public static void setStart(Context c, LocalDate d) { p(c).edit().putString("start", d.toString()).apply(); }
 
+    public static Duty.Baseline baseline(Context c) {
+        return Duty.loadBaseline(p(c).getString("baseline", null));
+    }
+
+    /** Thứ 2 của tuần hiện tại: điểm danh trước ngày này là "tuần đã qua". */
+    public static LocalDate weekStart() {
+        LocalDate t = LocalDate.now();
+        return t.minusDays(t.getDayOfWeek().getValue() - 1);
+    }
+
+    /**
+     * Chốt các tuần đã qua: tính hàng chờ + thống kê tới hết tuần trước, lưu lại làm mốc,
+     * rồi xoá điểm danh các tuần đó khỏi máy. Lượt trực vẫn liên tục như trước khi xoá.
+     */
+    public static void compactPastWeeks(Context c) {
+        synchronized (LOCK) {
+            LocalDate cutoff = weekStart();
+            List<Duty.Session> all = sessions(c);
+            List<Duty.Session> old = new ArrayList<>(), keep = new ArrayList<>();
+            for (Duty.Session s : all) (s.date != null && s.date.isBefore(cutoff) ? old : keep).add(s);
+            if (old.isEmpty()) return;
+
+            Duty.Baseline base = baseline(c);
+            Duty.Result r = Duty.compute(roster(c), old, perDay(c), start(c), base); // compute bỏ qua buổi < base.until
+            Duty.Baseline nb = new Duty.Baseline();
+            nb.until = base != null && base.until != null && base.until.isAfter(cutoff) ? base.until : cutoff;
+            nb.queue = new ArrayList<>(r.queue);
+            nb.stats.putAll(r.stats);
+            p(c).edit()
+                    .putString("baseline", Duty.saveBaseline(nb))
+                    .putString("sessions", Duty.saveSessions(keep))
+                    .commit();
+        }
+    }
+
     public static Duty.Result compute(Context c) {
-        return Duty.compute(roster(c), sessions(c), perDay(c), start(c));
+        compactPastWeeks(c);
+        return Duty.compute(roster(c), sessions(c), perDay(c), start(c), baseline(c));
     }
 
     /** Ai trực hôm nay (theo buổi gần nhất đã/đang diễn ra), dùng cho widget. */

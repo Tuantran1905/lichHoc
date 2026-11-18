@@ -72,6 +72,20 @@ public class Duty {
     }
 
     public static Result compute(List<Student> roster, List<Session> sessions, int perDay, LocalDate start) {
+        return compute(roster, sessions, perDay, start, null);
+    }
+
+    /**
+     * Hàng chờ + thống kê đã chốt của các tuần cũ (đã xoá khỏi máy). Tính tiếp từ đây thì
+     * lượt trực vẫn liên tục như khi còn đủ lịch sử. until = ngày đầu tiên chưa được chốt.
+     */
+    public static class Baseline {
+        public LocalDate until;
+        public List<String> queue = new ArrayList<>();
+        public final Map<String, Stat> stats = new HashMap<>();
+    }
+
+    public static Result compute(List<Student> roster, List<Session> sessions, int perDay, LocalDate start, Baseline base) {
         Result R = new Result();
         int n = Math.max(1, perDay);
         List<String> queue = new ArrayList<>();
@@ -79,11 +93,18 @@ public class Duty {
         sorted.sort(Comparator.comparingInt(s -> s.stt));
         for (Student s : sorted) {
             R.byId.put(s.id, s);
-            R.stats.put(s.id, new Stat());
-            if (s.active) queue.add(s.id);
+            Stat st = new Stat();
+            Stat b = base == null ? null : base.stats.get(s.id);
+            if (b != null) { st.days = b.days; st.sess = b.sess; st.absent = b.absent; st.subs = b.subs; }
+            R.stats.put(s.id, st);
         }
+        if (base != null) // giữ thứ tự đã chốt; bạn mới thêm / vừa cho trực lại xếp cuối theo STT
+            for (String id : base.queue) { Student s = R.byId.get(id); if (s != null && s.active && !queue.contains(id)) queue.add(id); }
+        for (Student s : sorted) if (s.active && !queue.contains(s.id)) queue.add(s.id);
         List<Session> ss = new ArrayList<>();
-        for (Session s : sessions) if (s.date != null && (start == null || !s.date.isBefore(start))) ss.add(s);
+        for (Session s : sessions)
+            if (s.date != null && (start == null || !s.date.isBefore(start))
+                    && (base == null || base.until == null || !s.date.isBefore(base.until))) ss.add(s);
         ss.sort(Comparator.comparing((Session s) -> s.date).thenComparingInt(Session::buoiIndex));
 
         for (int i = 0; i < ss.size(); ) {
@@ -137,6 +158,34 @@ public class Duty {
         }
         R.queue = queue;
         return R;
+    }
+
+    public static String saveBaseline(Baseline b) {
+        StringBuilder s = new StringBuilder();
+        s.append(b.until == null ? "" : b.until.toString()).append('\n').append(String.join(",", b.queue)).append('\n');
+        for (Map.Entry<String, Stat> e : b.stats.entrySet()) {
+            Stat t = e.getValue();
+            s.append(c(e.getKey())).append('\t').append(t.days).append('\t').append(t.sess)
+             .append('\t').append(t.absent).append('\t').append(t.subs).append('\n');
+        }
+        return s.toString();
+    }
+
+    public static Baseline loadBaseline(String text) {
+        if (text == null || text.isEmpty()) return null;
+        String[] lines = text.split("\n", -1);
+        Baseline b = new Baseline();
+        if (lines.length > 0 && !lines[0].isEmpty()) b.until = LocalDate.parse(lines[0]);
+        if (lines.length > 1) for (String id : lines[1].split(",")) if (!id.isEmpty()) b.queue.add(id);
+        for (int i = 2; i < lines.length; i++) {
+            String[] p = lines[i].split("\t", -1);
+            if (p.length < 5) continue;
+            Stat t = new Stat();
+            t.days = Integer.parseInt(p[1]); t.sess = Integer.parseInt(p[2]);
+            t.absent = Integer.parseInt(p[3]); t.subs = Integer.parseInt(p[4]);
+            b.stats.put(p[0], t);
+        }
+        return b;
     }
 
     // ---------- Lưu trữ dạng văn bản ----------

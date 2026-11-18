@@ -239,8 +239,13 @@ public class MainActivity extends Activity {
         share.setOnClickListener(v -> shareDuty(R));
         root.addView(share, Ui.lp(this, 12));
 
+        // Chỉ hiện tuần này và các tuần sau; điểm danh tuần đã qua đã được chốt vào lượt trực và xoá.
+        LocalDate mon = Store.weekStart();
+        int lastWeek = -1;
         for (Duty.Day d : R.days) {
-            if (d.date.isBefore(today.minusDays(7))) continue;
+            if (d.date.isBefore(mon)) continue;
+            int wk = (int) (java.time.temporal.ChronoUnit.DAYS.between(mon, d.date) / 7);
+            if (wk != lastWeek) { addDutyWeekHeader(R, mon.plusWeeks(wk), wk); lastWeek = wk; }
             boolean isToday = d.date.equals(today);
             LinearLayout card = Ui.card(this, isToday);
             card.addView(Ui.dayHeader(this, d.date, isToday, null));
@@ -285,9 +290,47 @@ public class MainActivity extends Activity {
             }
             root.addView(card, Ui.lp(this, 12));
         }
-        TextView note = Ui.text(this, "Lịch phía sau là dự kiến và tự đổi theo điểm danh. Bạn đến lượt mà vắng cả ngày sẽ trực vào ngày học kế tiếp, nên không ai bị bỏ sót.", 12, Ui.MUTED, false);
+        TextView note = Ui.text(this, "Lịch phía sau là dự kiến và tự đổi theo điểm danh. Bạn đến lượt mà vắng cả ngày sẽ trực vào ngày học kế tiếp, nên không ai bị bỏ sót.\n"
+                + "Điểm danh các tuần đã qua được tự xoá; lượt trực và thống kê vẫn được giữ.", 12, Ui.MUTED, false);
         note.setGravity(Gravity.CENTER);
         root.addView(note, Ui.lp(this, 14));
+    }
+
+    /** Tiêu đề tuần: "Tuần này 16/11 – 22/11" + thanh tiến độ điểm danh. */
+    private void addDutyWeekHeader(Duty.Result R, LocalDate mon, int wk) {
+        LocalDate sun = mon.plusDays(6), today = LocalDate.now();
+        int total = 0, done = 0, due = 0;
+        for (Duty.Day d : R.days) {
+            if (d.date.isBefore(mon) || d.date.isAfter(sun)) continue;
+            for (Duty.Row r : d.rows) {
+                total++;
+                if (r.s.checked) done++;
+                else if (!d.date.isAfter(today)) due++;
+            }
+        }
+        LinearLayout head = Ui.hbox(this);
+        LinearLayout tt = Ui.vbox(this);
+        tt.addView(Ui.label(this, wk == 0 ? "Tuần này" : wk == 1 ? "Tuần sau" : "Sau " + wk + " tuần", Ui.MUTED));
+        tt.addView(Ui.text(this, String.format("%02d/%02d – %02d/%02d", mon.getDayOfMonth(), mon.getMonthValue(),
+                sun.getDayOfMonth(), sun.getMonthValue()), 18, Ui.FG, true));
+        head.addView(tt, Ui.weight(1));
+        if (wk == 0 && total > 0) {
+            if (due > 0) head.addView(Ui.pill(this, "● Còn " + due + " buổi", Ui.WARN, Ui.WARN_SOFT));
+            else head.addView(Ui.pill(this, "✓ " + done + "/" + total + " buổi", Ui.OK, Ui.OK_SOFT));
+        }
+        root.addView(head, Ui.lp(this, 22));
+
+        if (wk == 0 && total > 0) { // thanh tiến độ điểm danh tuần này
+            LinearLayout track = Ui.hbox(this);
+            track.setBackground(Ui.round(this, Ui.LINE, 4));
+            android.view.View fill = new android.view.View(this);
+            fill.setBackground(Ui.round(this, due > 0 ? Ui.WARN : Ui.OK, 4));
+            track.addView(fill, new LinearLayout.LayoutParams(0, Ui.dp(this, 6), Math.max(1, done)));
+            track.addView(new android.view.View(this), new LinearLayout.LayoutParams(0, Ui.dp(this, 6), Math.max(0, total - done)));
+            root.addView(track, Ui.lp(this, 8));
+            TextView t = Ui.text(this, "Đã điểm danh " + done + "/" + total + " buổi trong tuần", 12, Ui.MUTED, false);
+            root.addView(t, Ui.lp(this, 4));
+        }
     }
 
     private String names(Duty.Result R, List<String> ids) {
