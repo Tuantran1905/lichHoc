@@ -2,7 +2,13 @@ name: Build APK
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      migration:
+        description: "One-time migration build (debuggable, so old data can be restored)"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -11,17 +17,37 @@ jobs:
       run:
         working-directory: LichHoc
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '8.10.2'
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
+          gradle-version: '8.14.7'
+
+      - name: Decode signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+          else
+            echo "::warning::KEYSTORE_BASE64 secret not set - APK will be unsigned"
+          fi
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+          MIGRATION_DEBUGGABLE: ${{ inputs.migration && '1' || '0' }}
+        run: gradle assembleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v7
         with:
-          name: LichHoc-apk
-          path: LichHoc/app/build/outputs/apk/debug/app-debug.apk
+          # the migration build gets its own name so the home server never offers it as an update
+          name: ${{ inputs.migration && 'lichhoc-migration-apk' || 'lichhoc-apk' }}
+          path: LichHoc/app/build/outputs/apk/release/*.apk
+          retention-days: 30

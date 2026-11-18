@@ -60,13 +60,18 @@ public class MainActivity extends Activity {
         setContentView(outer);
         render();
         if (Repo.current(this) == null && Repo.next(this) == null) syncNow();
+        AppUpdater.handleIntent(this, getIntent());
+        AppUpdater.check(this, false);
     }
+
+    @Override
+    protected void onNewIntent(Intent i) { super.onNewIntent(i); AppUpdater.handleIntent(this, i); }
 
     @Override
     protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putString("tab", tab); }
 
     @Override
-    protected void onResume() { super.onResume(); render(); }
+    protected void onResume() { super.onResume(); render(); AppUpdater.onResume(this); }
 
     private void syncNow() {
         if (syncing) return;

@@ -2,6 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+// Values injected by GitHub Actions (see .github/workflows/build.yml). Local builds still work:
+// they just have no release key and no updater.
+def env = { String k, String d = '' -> System.getenv(k) ?: d }
+
 android {
     namespace 'vn.lichhoc.cnt125'
     compileSdk 34
@@ -10,8 +14,27 @@ android {
         applicationId 'vn.lichhoc.cnt125'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        // GitHub Actions build number -> every build installs over the previous one
+        versionCode env('GITHUB_RUN_NUMBER', '1').toInteger()
+        versionName '1.0.' + env('GITHUB_RUN_NUMBER', '0')
+
+        buildConfigField 'String', 'UPDATE_URL', "\"${env('UPDATE_URL', 'https://status.binmall.shop')}\""
+        buildConfigField 'String', 'UPDATE_APP_ID', '"lichhoc"'
+        buildConfigField 'String', 'UPDATE_TOKEN', "\"${env('UPDATE_TOKEN')}\""
+    }
+
+    buildFeatures { buildConfig true }
+
+    signingConfigs {
+        if (env('KEYSTORE_PATH')) {
+            release {
+                storeFile file(env('KEYSTORE_PATH'))
+                storeType 'pkcs12'
+                storePassword env('KEYSTORE_PASSWORD')
+                keyAlias env('KEY_ALIAS')
+                keyPassword env('KEYSTORE_PASSWORD')
+            }
+        }
     }
 
     compileOptions {
@@ -21,6 +44,11 @@ android {
     }
 
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (env('KEYSTORE_PATH')) signingConfig signingConfigs.release
+            // Only for the one-time migration build: lets the old data be restored with adb run-as.
+            debuggable env('MIGRATION_DEBUGGABLE') == '1'
+        }
     }
 }
